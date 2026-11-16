@@ -1,10 +1,10 @@
-
 "use client";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "../../../../../components/admin/Sidebar";
+import "leaflet/dist/leaflet.css";
 
 interface Laporan {
   id: string;
@@ -31,6 +31,10 @@ export default function DetailLaporanPage() {
   const [saving, setSaving] = useState(false);
   const [pesan, setPesan] = useState("");
 
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapInstanceRef = useRef<any>(null);
+
   // Mengambil data laporan berdasarkan ID
   useEffect(() => {
     const ambilDetailLaporan = async () => {
@@ -44,14 +48,10 @@ export default function DetailLaporanPage() {
         }
 
         const hasil = await response.json();
-        console.log("ID dari URL:", id);
-        console.log("Data dari API:", hasil.data);
 
         const dataDitemukan = hasil.data.find(
           (item: Laporan) => String(item.id).trim() === String(id).trim()
         );
-
-        console.log("Data ditemukan:", dataDitemukan);
 
         if (dataDitemukan) {
           setLaporan(dataDitemukan);
@@ -67,6 +67,60 @@ export default function DetailLaporanPage() {
     ambilDetailLaporan();
   }, [id]);
 
+  // Inisialisasi Peta Leaflet sesuai koordinat laporan
+  useEffect(() => {
+    if (
+      !laporan ||
+      laporan.latitude === null ||
+      laporan.longitude === null
+    ) {
+      return;
+    }
+
+    let isMounted = true;
+    const lat = Number(laporan.latitude);
+    const lng = Number(laporan.longitude);
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return;
+
+    async function setupMap() {
+      if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+      const L = (await import("leaflet")).default;
+      if (!isMounted || !mapContainerRef.current) return;
+
+      const customIcon = L.icon({
+        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+        iconRetinaUrl:
+          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+        shadowUrl:
+          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+      });
+
+      const map = L.map(mapContainerRef.current).setView([lat, lng], 16);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+
+      L.marker([lat, lng], { icon: customIcon }).addTo(map);
+
+      mapInstanceRef.current = map;
+    }
+
+    setupMap();
+
+    return () => {
+      isMounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [laporan]);
+
   const formatTanggal = (tanggal: string) => {
     return new Date(tanggal).toLocaleDateString("id-ID", {
       day: "numeric",
@@ -74,41 +128,42 @@ export default function DetailLaporanPage() {
       year: "numeric",
     });
   };
+
   const handleSimpan = async () => {
-  try {
-    setSaving(true);
-    setPesan("");
+    try {
+      setSaving(true);
+      setPesan("");
 
-    const response = await fetch("/api/laporan", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        id: laporan?.id,
-        status: status,
-        catatan_petugas: catatan,
-      }),
-    });
+      const response = await fetch("/api/laporan", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: laporan?.id,
+          status: status,
+          catatan_petugas: catatan,
+        }),
+      });
 
-    const hasil = await response.json();
+      const hasil = await response.json();
 
-    if (!response.ok) {
-      throw new Error(hasil.message || "Gagal menyimpan perubahan.");
+      if (!response.ok) {
+        throw new Error(hasil.message || "Gagal menyimpan perubahan.");
+      }
+
+      setLaporan(hasil.data);
+      setPesan("Perubahan laporan berhasil disimpan!");
+    } catch (error) {
+      setPesan(
+        error instanceof Error
+          ? error.message
+          : "Terjadi kesalahan saat menyimpan."
+      );
+    } finally {
+      setSaving(false);
     }
-
-    setLaporan(hasil.data);
-    setPesan("Perubahan laporan berhasil disimpan!");
-  } catch (error) {
-    setPesan(
-      error instanceof Error
-        ? error.message
-        : "Terjadi kesalahan saat menyimpan."
-    );
-  } finally {
-    setSaving(false);
-  }
-};
+  };
 
   // Tampilan ketika data sedang dimuat
   if (loading) {
@@ -144,6 +199,9 @@ export default function DetailLaporanPage() {
     );
   }
 
+  const hasCoords =
+    laporan.latitude !== null && laporan.longitude !== null;
+
   return (
     <main className="flex min-h-screen bg-[#F2F7FF]">
       <Sidebar />
@@ -163,10 +221,8 @@ export default function DetailLaporanPage() {
 
         {/* Konten utama */}
         <div className="grid grid-cols-1 items-start gap-4 min-[700px]:grid-cols-2">
-
           {/* Kolom kiri: Foto dan lokasi */}
           <div className="rounded-2xl bg-white p-3.5 shadow-[0_5px_18px_rgba(30,80,150,0.08)]">
-
             <p className="mb-2.5 text-[12px] font-bold tracking-[1.5px] text-[#2470D5]">
               FOTO DARI PELAPOR
             </p>
@@ -184,48 +240,38 @@ export default function DetailLaporanPage() {
               TITIK LOKASI
             </p>
 
-            {/* Peta sementara */}
-            <div className="relative h-[150px] overflow-hidden rounded-xl border border-[#D2E3FA] bg-[#E1EDFC]">
-              <svg
-                viewBox="0 0 300 100"
-                preserveAspectRatio="none"
-                className="absolute inset-0 h-full w-full"
-              >
-                <path
-                  d="M-10 70 C60 25 100 100 165 55 S250 20 320 55"
-                  stroke="white"
-                  strokeWidth="5"
-                  fill="none"
+            {/* Peta Interaktif Leaflet */}
+            {hasCoords ? (
+              <>
+                <div
+                  ref={mapContainerRef}
+                  className="relative z-0 h-56 w-full overflow-hidden rounded-xl border border-[#D2E3FA] bg-[#E5F0FF]"
                 />
-                <path
-                  d="M90 -10 L120 110"
-                  stroke="white"
-                  strokeWidth="5"
-                  fill="none"
-                />
-              </svg>
 
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl">
-                📍
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <a
+                    href={`https://www.google.com/maps?q=${laporan.latitude},${laporan.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-[#2470D5] hover:underline"
+                  >
+                    Lihat lokasi di Google Maps →
+                  </a>
+
+                  <span className="text-[11px] text-[#647A9B]">
+                    {laporan.latitude}, {laporan.longitude}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="flex h-[150px] items-center justify-center rounded-xl border border-[#D2E3FA] bg-[#F1F6FE] px-4 text-center text-xs text-[#647A9B]">
+                Titik koordinat GPS tidak disertakan oleh pelapor.
               </div>
-            </div>
-
-            {laporan.latitude !== null &&
-              laporan.longitude !== null && (
-                <a
-                  href={`https://www.google.com/maps?q=${laporan.latitude},${laporan.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 block text-xs font-medium text-[#2470D5] hover:underline"
-                >
-                  Lihat lokasi di Google Maps →
-                </a>
-              )}
+            )}
           </div>
 
           {/* Kolom kanan */}
           <div className="space-y-3.5">
-
             {/* Informasi laporan */}
             <div className="rounded-2xl bg-white p-4 shadow-[0_5px_18px_rgba(30,80,150,0.08)]">
               <div className="mb-3 flex items-center justify-between gap-2">

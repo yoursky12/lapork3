@@ -12,17 +12,17 @@ const daftarStatistik = [
   {
     judul: "Total Laporan",
     warna: "bg-blue-100 text-blue-700",
-    icon: "/data.svg",
+    icon: "/laporan.svg",
   },
   {
     judul: "Menunggu",
     warna: "bg-yellow-100 text-yellow-700",
-    icon: "⏳",
+    icon: "/menunggu.svg",
   },
   {
     judul: "Diproses",
     warna: "bg-orange-100 text-orange-700",
-    icon: "🔄",
+    icon: "/diproses.svg",
   },
   {
     judul: "Selesai",
