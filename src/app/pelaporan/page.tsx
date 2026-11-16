@@ -271,7 +271,7 @@ export default function PelaporanPage() {
                 </span>
 
                 <span className="mt-2 text-[10px] text-[#7185A5]">
-                  JPG atau PNG, maksimal 5 MB. Pastikan tumpukan sampah terlihat
+                  JPG atau PNG, maksimal 4.5 MB. Pastikan tumpukan sampah terlihat
                   jelas.
                 </span>
 
