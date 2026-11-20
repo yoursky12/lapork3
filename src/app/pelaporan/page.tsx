@@ -6,26 +6,41 @@ import Navbar from "../../components/Navbar";
 import Image from "next/image";
 import "leaflet/dist/leaflet.css";
 
-// Batas koordinat wilayah Kelurahan Kelapa Tiga, Kec. Tanjung Karang Pusat, Bandar Lampung
-const KELAPA_TIGA_BOUNDS = {
-  minLat: -5.4185,
-  maxLat: -5.4015,
-  minLng: 105.229,
-  maxLng: 105.255,
-};
+// Poligon batas wilayah Kelurahan Kelapa Tiga (mengikuti Jl. Sisingamangaraja, Pasar Tamin, Jl. Kartini, dan Jl. H. Agus Salim)
+const KELAPA_TIGA_POLYGON: [number, number][] = [
+  [-5.4062, 105.2368], // Puncak barat laut (tikungan Jl. Sisingamangaraja)
+  [-5.4082, 105.2412], // Lekukan tengah Jl. Sisingamangaraja
+  [-5.4086, 105.2465], // Sekitar Pasar Tamin
+  [-5.4088, 105.2558], // Ujung timur laut (Jl. Kartini / dekat Chandra Mall)
+  [-5.4120, 105.2552], // Ujung tenggara (Simpur Center / Jl. H. Agus Salim)
+  [-5.4118, 105.2342], // Batas selatan lurus mengikuti Jl. H. Agus Salim
+  [-5.4076, 105.2345], // Sisi barat kembali ke arah Jl. Sisingamangaraja
+];
 
-const DEFAULT_CENTER = { lat: -5.4085, lng: 105.241 };
+const DEFAULT_CENTER = { lat: -5.4102, lng: 105.2435 };
 
 // Toleransi geser pin maksimal 100 meter dari titik GPS asli (untuk gang sempit)
 const MAX_PIN_OFFSET_METERS = 100;
 
 function isWithinKelapaTiga(lat: number, lng: number): boolean {
-  return (
-    lat >= KELAPA_TIGA_BOUNDS.minLat &&
-    lat <= KELAPA_TIGA_BOUNDS.maxLat &&
-    lng >= KELAPA_TIGA_BOUNDS.minLng &&
-    lng <= KELAPA_TIGA_BOUNDS.maxLng
-  );
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+
+  let inside = false;
+  for (
+    let i = 0, j = KELAPA_TIGA_POLYGON.length - 1;
+    i < KELAPA_TIGA_POLYGON.length;
+    j = i++
+  ) {
+    const [latI, lngI] = KELAPA_TIGA_POLYGON[i];
+    const [latJ, lngJ] = KELAPA_TIGA_POLYGON[j];
+
+    const intersect =
+      lngI > lng !== lngJ > lng &&
+      lat < ((latJ - latI) * (lng - lngI)) / (lngJ - lngI) + latI;
+
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 function getDistanceMeters(
@@ -234,20 +249,14 @@ export default function PelaporanPage() {
         attribution: "&copy; OpenStreetMap contributors",
       }).addTo(map);
 
-      // Gambar kotak batas area layanan Kelurahan Kelapa Tiga
-      L.rectangle(
-        [
-          [KELAPA_TIGA_BOUNDS.minLat, KELAPA_TIGA_BOUNDS.minLng],
-          [KELAPA_TIGA_BOUNDS.maxLat, KELAPA_TIGA_BOUNDS.maxLng],
-        ],
-        {
-          color: "#2475E5",
-          weight: 2,
-          dashArray: "6 6",
-          fillColor: "#2475E5",
-          fillOpacity: 0.06,
-        }
-      ).addTo(map);
+      // Gambar garis batas poligon area layanan Kelurahan Kelapa Tiga
+      L.polygon(KELAPA_TIGA_POLYGON, {
+        color: "#2475E5",
+        weight: 2,
+        dashArray: "6 6",
+        fillColor: "#2475E5",
+        fillOpacity: 0.08,
+      }).addTo(map);
 
       const marker = L.marker([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], {
         draggable: true,
