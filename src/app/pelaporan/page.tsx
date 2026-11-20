@@ -6,21 +6,38 @@ import Navbar from "../../components/Navbar";
 import Image from "next/image";
 import "leaflet/dist/leaflet.css";
 
-// Koordinat default: Kelurahan Kelapa Tiga, Bandar Lampung
-const DEFAULT_CENTER = { lat: -5.39714, lng: 105.26679 };
+// Titik tengah Kelurahan Kelapa Tiga, Kec. Tanjung Karang Pusat, Bandar Lampung
+const DEFAULT_CENTER = { lat: -5.4165, lng: 105.2585 };
+
+interface NominatimResult {
+  place_id: number;
+  display_name: string;
+  lat: string;
+  lon: string;
+}
 
 export default function PelaporanPage() {
   const router = useRouter();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [lokasi, setLokasi] = useState("");
-  const [jenisSampah, setJenisSampah] = useState("Plastik");
+  const [jenisSampah, setJenisSampah] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
+    DEFAULT_CENTER
+  );
+
+  // State pencarian alamat ke peta
+  const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
+  const [isSearchingLocation, setIsSearchingLocation] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
 
   const [isLocating, setIsLocating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
+  const isUserTypingRef = useRef(false);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,8 +45,17 @@ export default function PelaporanPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markerRef = useRef<any>(null);
 
-  // Mengubah koordinat GPS menjadi nama jalan otomatis (Gratis via OpenStreetMap)
+  // Cek apakah seluruh poin 1-4 sudah terisi
+  const isFormComplete =
+    Boolean(selectedFile) &&
+    lokasi.trim().length > 0 &&
+    jenisSampah.trim().length > 0 &&
+    deskripsi.trim().length > 0;
+
+  // Mengubah koordinat GPS menjadi nama jalan otomatis
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
+    isUserTypingRef.current = false;
+    setShowDropdown(false);
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=id`
@@ -44,6 +70,90 @@ export default function PelaporanPage() {
       setLokasi(`Titik GPS (${lat}, ${lng})`);
     }
   }, []);
+
+  // Mencari koordinat dari ketikan alamat (Forward Geocoding)
+  const searchAddress = useCallback(
+    async (query: string, autoSelectFirst = false) => {
+      const cleanQuery = query.trim();
+      if (cleanQuery.length < 3) {
+        setSearchResults([]);
+        setShowDropdown(false);
+        return;
+      }
+
+      setIsSearchingLocation(true);
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          cleanQuery
+        )}&countrycodes=id&viewbox=105.20,-5.46,105.32,-5.36&bounded=0&limit=5&accept-language=id`;
+
+        const res = await fetch(url);
+        const data: NominatimResult[] = await res.json();
+        const results = Array.isArray(data) ? data : [];
+
+        setSearchResults(results);
+
+        if (autoSelectFirst && results.length > 0) {
+          const first = results[0];
+          const lat = Number(Number(first.lat).toFixed(6));
+          const lng = Number(Number(first.lon).toFixed(6));
+          isUserTypingRef.current = false;
+          setLokasi(first.display_name);
+          setCoords({ lat, lng });
+          setShowDropdown(false);
+          setErrorMsg("");
+        } else {
+          setShowDropdown(true);
+        }
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearchingLocation(false);
+      }
+    },
+    []
+  );
+
+  // Autocomplete otomatis saat user mengetik lokasi (jeda 500ms)
+  useEffect(() => {
+    if (!isUserTypingRef.current) return;
+
+    const timer = setTimeout(() => {
+      if (lokasi.trim().length >= 3) {
+        searchAddress(lokasi, false);
+      } else {
+        setSearchResults([]);
+        setShowDropdown(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [lokasi, searchAddress]);
+
+  // Tutup dropdown saran lokasi kalau klik di luar kolom pencarian
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Pilih salah satu hasil pencarian alamat
+  const handleSelectSearchResult = (item: NominatimResult) => {
+    const lat = Number(Number(item.lat).toFixed(6));
+    const lng = Number(Number(item.lon).toFixed(6));
+    isUserTypingRef.current = false;
+    setLokasi(item.display_name);
+    setCoords({ lat, lng });
+    setShowDropdown(false);
+    setErrorMsg("");
+  };
 
   // Inisialisasi Peta Interaktif Leaflet
   useEffect(() => {
@@ -113,7 +223,7 @@ export default function PelaporanPage() {
     };
   }, [reverseGeocode]);
 
-  // Pindahkan pin peta saat GPS perangkat terdeteksi
+  // Pindahkan pin & arahkan kamera peta setiap kali koordinat berubah
   useEffect(() => {
     if (coords && mapInstanceRef.current && markerRef.current) {
       markerRef.current.setLatLng([coords.lat, coords.lng]);
@@ -174,12 +284,22 @@ export default function PelaporanPage() {
     setErrorMsg("");
 
     if (!selectedFile) {
-      setErrorMsg("Silakan pilih atau unggah foto tempat sampah terlebih dahulu.");
+      setErrorMsg("Poin 1 wajib diisi: Unggah foto tempat sampah terlebih dahulu.");
       return;
     }
 
     if (!lokasi.trim()) {
-      setErrorMsg("Silakan isi patokan lokasi sampah.");
+      setErrorMsg("Poin 2 wajib diisi: Tentukan patokan atau titik lokasi sampah.");
+      return;
+    }
+
+    if (!jenisSampah.trim()) {
+      setErrorMsg("Poin 3 wajib diisi: Pilih jenis sampah terlebih dahulu.");
+      return;
+    }
+
+    if (!deskripsi.trim()) {
+      setErrorMsg("Poin 4 wajib diisi: Tuliskan deskripsi singkat kondisi sampah.");
       return;
     }
 
@@ -244,16 +364,31 @@ export default function PelaporanPage() {
         {/* FORM PELAPORAN */}
         <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(30,90,160,0.12)] md:p-8">
           <form onSubmit={handleSubmit} className="space-y-5">
+            {/* BANNER PERINGATAN ANTI HOAX & AI */}
+              <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-800">
+                <span className="mt-0.5 text-lg leading-none">⚠️</span>
+                <div className="text-xs leading-relaxed">
+                  <p className="font-bold text-red-900">
+                    Peringatan: Dilarang Mengirim Laporan Hoax atau Gambar AI!
+                  </p>
+                  <p className="mt-1 text-red-700">
+                    Wajib melampirkan foto asli kondisi nyata di lapangan. Laporan
+                    palsu, rekayasa, atau gambar hasil buatan AI akan langsung
+                    ditindaklanjuti.
+                  </p>
+                </div>
+              </div>
+
             {errorMsg && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
                 {errorMsg}
               </div>
             )}
 
-            {/* UPLOAD FOTO */}
+            {/* 1. UPLOAD FOTO */}
             <div>
               <label className="mb-2 block text-[14px] font-bold text-[#17396B]">
-                1. Foto tempat sampah
+                1. Foto tempat sampah <span className="text-red-500">*</span>
               </label>
 
               <label className="flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#91BCFF] bg-[#F3F8FF] px-4 py-5 text-center transition hover:bg-[#EAF3FF]">
@@ -281,23 +416,75 @@ export default function PelaporanPage() {
               </label>
             </div>
 
-            {/* LOKASI & PETA INTERAKTIF */}
+            {/* 2. LOKASI & PETA INTERAKTIF */}
             <div>
               <label
                 htmlFor="lokasi"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                2. Lokasi
+                2. Lokasi <span className="text-red-500">*</span>
               </label>
 
-              <input
-                id="lokasi"
-                type="text"
-                value={lokasi}
-                onChange={(e) => setLokasi(e.target.value)}
-                placeholder="Contoh: Jl. Raja Muda, dekat RT 03"
-                className="w-full rounded-lg border border-[#C9DDFB] px-3 py-3 text-xs text-[#17396B] outline-none transition placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
-              />
+              {/* KOLOM PENCARIAN ALAMAT TERHUBUNG KE PETA */}
+              <div ref={searchContainerRef} className="relative">
+                <div className="flex gap-2">
+                  <input
+                    id="lokasi"
+                    type="text"
+                    value={lokasi}
+                    onChange={(e) => {
+                      isUserTypingRef.current = true;
+                      setLokasi(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        searchAddress(lokasi, true);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (searchResults.length > 0) {
+                        setShowDropdown(true);
+                      }
+                    }}
+                    placeholder="Ketik nama jalan atau wilayah, misal: Kelapa Tiga Bandar Lampung"
+                    className="w-full rounded-lg border border-[#C9DDFB] px-3 py-3 text-xs text-[#17396B] outline-none transition placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => searchAddress(lokasi, true)}
+                    disabled={isSearchingLocation || lokasi.trim().length < 3}
+                    className="shrink-0 rounded-lg bg-[#2475E5] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#155FC5] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isSearchingLocation ? "Mencari..." : "Cari di Peta"}
+                  </button>
+                </div>
+
+                {/* DROPDOWN HASIL PENCARIAN ALAMAT */}
+                {showDropdown && (
+                  <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-[#C9DDFB] bg-white shadow-lg">
+                    {searchResults.length > 0 ? (
+                      searchResults.map((item) => (
+                        <button
+                          key={item.place_id}
+                          type="button"
+                          onClick={() => handleSelectSearchResult(item)}
+                          className="block w-full border-b border-[#EEF5FF] px-3.5 py-2.5 text-left text-xs text-[#17396B] transition last:border-b-0 hover:bg-[#EAF3FF]"
+                        >
+                          📍 {item.display_name}
+                        </button>
+                      ))
+                    ) : (
+                      !isSearchingLocation && (
+                        <div className="px-3.5 py-2.5 text-xs text-[#7185A5]">
+                          Lokasi tidak ditemukan. Coba ketik nama jalan terdekat lalu geser pin biru di peta.
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* CONTAINER PETA LEAFLET */}
               <div
@@ -306,7 +493,7 @@ export default function PelaporanPage() {
               />
 
               <p className="mt-1 text-[10px] text-[#7185A5]">
-                Klik pada peta atau geser pin biru untuk menyesuaikan titik lokasi sampah.
+                Ketik alamat lalu klik hasil saran / tombol <strong>Cari di Peta</strong>, atau geser pin biru untuk menyesuaikan titiknya.
               </p>
 
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -331,13 +518,13 @@ export default function PelaporanPage() {
               </div>
             </div>
 
-            {/* JENIS SAMPAH */}
+            {/* 3. JENIS SAMPAH */}
             <div>
               <label
                 htmlFor="jenis"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                3. Jenis sampah
+                3. Jenis sampah <span className="text-red-500">*</span>
               </label>
 
               <select
@@ -346,6 +533,9 @@ export default function PelaporanPage() {
                 onChange={(e) => setJenisSampah(e.target.value)}
                 className="w-full rounded-lg border border-[#C9DDFB] bg-white px-3 py-3 text-xs text-[#17396B] outline-none focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
               >
+                <option value="" disabled>
+                  -- Pilih jenis sampah --
+                </option>
                 <option value="Plastik">Plastik</option>
                 <option value="Organik">Organik</option>
                 <option value="Kertas">Kertas</option>
@@ -356,13 +546,13 @@ export default function PelaporanPage() {
               </select>
             </div>
 
-            {/* DESKRIPSI */}
+            {/* 4. DESKRIPSI */}
             <div>
               <label
                 htmlFor="deskripsi"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                4. Deskripsi singkat
+                4. Deskripsi singkat <span className="text-red-500">*</span>
               </label>
 
               <textarea
@@ -397,13 +587,21 @@ export default function PelaporanPage() {
             </div>
 
             {/* TOMBOL KIRIM */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full rounded-lg bg-[#2475E5] py-4 text-[16px] font-bold text-white shadow-lg shadow-blue-200 transition hover:bg-[#155FC5] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSubmitting ? "Mengirim Laporan..." : "Kirim Laporan →"}
-            </button>
+            <div>
+              <button
+                type="submit"
+                disabled={!isFormComplete || isSubmitting}
+                className="w-full rounded-lg bg-[#2475E5] py-4 text-[16px] font-bold text-white shadow-lg shadow-blue-200 transition hover:bg-[#155FC5] disabled:cursor-not-allowed disabled:bg-gray-300 disabled:shadow-none"
+              >
+                {isSubmitting ? "Mengirim Laporan..." : "Kirim Laporan →"}
+              </button>
+
+              {!isFormComplete && (
+                <p className="mt-2 text-center text-[11px] font-medium text-[#7185A5]">
+                  Lengkapi seluruh poin bertanda <span className="text-red-500">*</span> (poin 1–4) agar laporan dapat dikirim.
+                </p>
+              )}
+            </div>
           </form>
         </section>
 
@@ -416,7 +614,7 @@ export default function PelaporanPage() {
           <ol className="space-y-3.5">
             {[
               "Laporan bersifat anonim. Identitas pelapor tidak dikumpulkan.",
-              "Lampirkan foto asli tempat sampah yang terlihat jelas.",
+              "Lampirkan foto asli tempat sampah yang terlihat jelas (dilarang foto AI atau rekayasa).",
               "Isi lokasi seakurat mungkin agar petugas mudah menemukan titiknya.",
               "Tulis deskripsi singkat, jelas, dan sopan.",
               "Satu laporan untuk satu lokasi. Jangan mengirim laporan palsu atau berulang.",
