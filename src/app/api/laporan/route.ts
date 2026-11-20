@@ -15,6 +15,11 @@ const KELAPA_TIGA_BOUNDS = {
   maxLng: 105.255,
 };
 
+// Jeda minimal antar laporan dari browser yang sama (10 menit)
+const COOLDOWN_PENGIRIM_MENIT = 10;
+// Jeda minimal untuk titik koordinat sampah yang sama (30 menit)
+const COOLDOWN_LOKASI_MENIT = 30;
+
 function isWithinKelapaTiga(lat: number, lng: number): boolean {
   return (
     Number.isFinite(lat) &&
@@ -24,6 +29,18 @@ function isWithinKelapaTiga(lat: number, lng: number): boolean {
     lng >= KELAPA_TIGA_BOUNDS.minLng &&
     lng <= KELAPA_TIGA_BOUNDS.maxLng
   );
+}
+
+function bacaCookieCooldown(request: Request): number | null {
+  const cookieHeader = request.headers.get('cookie') || '';
+  const match = cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith('lapor_cooldown='));
+
+  if (!match) return null;
+  const timestamp = Number(match.split('=')[1]);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 // GET: Mengambil semua data laporan dari Supabase
@@ -54,9 +71,26 @@ export async function GET() {
   }
 }
 
-// POST: Mengunggah foto ke Supabase Storage & menyimpan laporan ke tabel laporan
+// POST: Validasi anti-spam & wilayah -> unggah foto -> simpan laporan
 export async function POST(request: Request) {
   try {
+    // 1. Pengunci Cookie Browser (10 menit)
+    const lastCookieTs = bacaCookieCooldown(request);
+    const cooldownMs = COOLDOWN_PENGIRIM_MENIT * 60 * 1000;
+
+    if (lastCookieTs && Date.now() - lastCookieTs < cooldownMs) {
+      const sisaMenit = Math.max(
+        1,
+        Math.ceil((cooldownMs - (Date.now() - lastCookieTs)) / 60000)
+      );
+      return NextResponse.json(
+        {
+          error: `Kamu baru saja mengirim laporan. Tunggu sekitar ${sisaMenit} menit lagi sebelum mengirim laporan berikutnya.`,
+        },
+        { status: 429 }
+      );
+    }
+
     const formData = await request.formData();
     const foto = formData.get('foto') as File | null;
     const lokasi = formData.get('lokasi') as string | null;
@@ -72,7 +106,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validasi wajib menyertakan koordinat GPS yang sah di Kelurahan Kelapa Tiga
     if (!latitude || !longitude) {
       return NextResponse.json(
         { error: 'Titik koordinat GPS wajib disertakan.' },
@@ -107,6 +140,33 @@ export async function POST(request: Request) {
       );
     }
 
+    // 2. Filter Titik Lokasi Ganda (radius ±25 meter dalam 30 menit terakhir)
+    const batasWaktuLokasi = new Date(
+      Date.now() - COOLDOWN_LOKASI_MENIT * 60 * 1000
+    ).toISOString();
+    const radiusDerajat = 0.00025;
+
+    const { data: laporanSekitar } = await supabase
+      .from('laporan')
+      .select('id')
+      .gte('created_at', batasWaktuLokasi)
+      .gte('latitude', latNum - radiusDerajat)
+      .lte('latitude', latNum + radiusDerajat)
+      .gte('longitude', lngNum - radiusDerajat)
+      .lte('longitude', lngNum + radiusDerajat)
+      .limit(1);
+
+    if (laporanSekitar && laporanSekitar.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            'Titik lokasi sampah ini baru saja dilaporkan dalam 30 menit terakhir. Tidak perlu mengirim laporan ganda.',
+        },
+        { status: 429 }
+      );
+    }
+
+    // 3. Lolos semua pengecekan -> baru unggah foto ke Supabase Storage
     const bytes = await foto.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const safeName = foto.name.replace(/[^a-zA-Z0-9.-]/g, '_');
@@ -155,13 +215,23 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         message: 'Laporan berhasil dikirim!',
         data: { ...laporanBaru, id: String(laporanBaru.id) },
       },
       { status: 201 }
     );
+
+    // Pasang cookie cooldown di browser pelapor selama 10 menit
+    response.cookies.set('lapor_cooldown', String(Date.now()), {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: COOLDOWN_PENGIRIM_MENIT * 60,
+      path: '/',
+    });
+
+    return response;
   } catch {
     return NextResponse.json(
       { error: 'Terjadi kesalahan saat memproses laporan.' },
