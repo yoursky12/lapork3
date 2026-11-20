@@ -7,6 +7,25 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Batas koordinat wilayah Kelurahan Kelapa Tiga, Kec. Tanjung Karang Pusat, Bandar Lampung
+const KELAPA_TIGA_BOUNDS = {
+  minLat: -5.4185,
+  maxLat: -5.4015,
+  minLng: 105.229,
+  maxLng: 105.255,
+};
+
+function isWithinKelapaTiga(lat: number, lng: number): boolean {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= KELAPA_TIGA_BOUNDS.minLat &&
+    lat <= KELAPA_TIGA_BOUNDS.maxLat &&
+    lng >= KELAPA_TIGA_BOUNDS.minLng &&
+    lng <= KELAPA_TIGA_BOUNDS.maxLng
+  );
+}
+
 // GET: Mengambil semua data laporan dari Supabase
 export async function GET() {
   try {
@@ -46,16 +65,37 @@ export async function POST(request: Request) {
     const latitude = formData.get('latitude') as string | null;
     const longitude = formData.get('longitude') as string | null;
 
-    if (!foto || !lokasi || !jenis_sampah) {
+    if (!foto || !lokasi?.trim() || !jenis_sampah?.trim() || !deskripsi?.trim()) {
       return NextResponse.json(
-        { error: 'Foto, lokasi, dan jenis sampah wajib diisi.' },
+        { error: 'Foto, lokasi, jenis sampah, dan deskripsi wajib diisi.' },
         { status: 400 }
       );
     }
 
-    if (!['image/jpeg', 'image/png'].includes(foto.type)) {
+    // Validasi wajib menyertakan koordinat GPS yang sah di Kelurahan Kelapa Tiga
+    if (!latitude || !longitude) {
       return NextResponse.json(
-        { error: 'Format foto harus JPG atau PNG.' },
+        { error: 'Titik koordinat GPS wajib disertakan.' },
+        { status: 400 }
+      );
+    }
+
+    const latNum = Number(latitude);
+    const lngNum = Number(longitude);
+
+    if (!isWithinKelapaTiga(latNum, lngNum)) {
+      return NextResponse.json(
+        {
+          error:
+            'Pelaporan ditolak: titik koordinat GPS berada di luar wilayah Kelurahan Kelapa Tiga, Bandar Lampung.',
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(foto.type)) {
+      return NextResponse.json(
+        { error: 'Format foto harus JPG, PNG, atau WEBP.' },
         { status: 400 }
       );
     }
@@ -96,10 +136,10 @@ export async function POST(request: Request) {
         {
           foto_url: publicUrlData.publicUrl,
           lokasi: lokasi.trim(),
-          latitude: latitude ? Number(latitude) : null,
-          longitude: longitude ? Number(longitude) : null,
-          jenis_sampah,
-          deskripsi: deskripsi?.trim() || '-',
+          latitude: latNum,
+          longitude: lngNum,
+          jenis_sampah: jenis_sampah.trim(),
+          deskripsi: deskripsi.trim(),
           julukan: ambilJulukanAcak(),
           status: 'Menunggu',
           catatan_petugas: '',

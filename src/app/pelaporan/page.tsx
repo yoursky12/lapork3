@@ -6,14 +6,44 @@ import Navbar from "../../components/Navbar";
 import Image from "next/image";
 import "leaflet/dist/leaflet.css";
 
-// Titik tengah Kelurahan Kelapa Tiga, Kec. Tanjung Karang Pusat, Bandar Lampung
-const DEFAULT_CENTER = { lat: -5.4165, lng: 105.2585 };
+// Batas koordinat wilayah Kelurahan Kelapa Tiga, Kec. Tanjung Karang Pusat, Bandar Lampung
+const KELAPA_TIGA_BOUNDS = {
+  minLat: -5.4185,
+  maxLat: -5.4015,
+  minLng: 105.229,
+  maxLng: 105.255,
+};
 
-interface NominatimResult {
-  place_id: number;
-  display_name: string;
-  lat: string;
-  lon: string;
+const DEFAULT_CENTER = { lat: -5.4085, lng: 105.241 };
+
+// Toleransi geser pin maksimal 100 meter dari titik GPS asli (untuk gang sempit)
+const MAX_PIN_OFFSET_METERS = 100;
+
+function isWithinKelapaTiga(lat: number, lng: number): boolean {
+  return (
+    lat >= KELAPA_TIGA_BOUNDS.minLat &&
+    lat <= KELAPA_TIGA_BOUNDS.maxLat &&
+    lng >= KELAPA_TIGA_BOUNDS.minLng &&
+    lng <= KELAPA_TIGA_BOUNDS.maxLng
+  );
+}
+
+function getDistanceMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 export default function PelaporanPage() {
@@ -21,25 +51,31 @@ export default function PelaporanPage() {
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+
   const [lokasi, setLokasi] = useState("");
   const [patokan, setPatokan] = useState("");
   const [jenisSampah, setJenisSampah] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
-    DEFAULT_CENTER
-  );
 
-  // State pencarian alamat ke peta
-  const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
-  const [isSearchingLocation, setIsSearchingLocation] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
+    null
+  );
+  const [isLocationValid, setIsLocationValid] = useState(false);
+  const [locationStatusMsg, setLocationStatusMsg] = useState(
+    "Mendeteksi posisi GPS perangkat..."
+  );
 
   const [isLocating, setIsLocating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const searchContainerRef = useRef<HTMLDivElement | null>(null);
-  const isUserTypingRef = useRef(false);
+  // Ref kamera live
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Simpan titik GPS asli dari perangkat sebagai acuan batas geser pin
+  const rawGpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,17 +83,113 @@ export default function PelaporanPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markerRef = useRef<any>(null);
 
-  // Cek apakah seluruh poin 1-4 sudah terisi
+  // Cek apakah seluruh poin 1-4 terpenuhi & lokasi sah di Kelapa Tiga
   const isFormComplete =
     Boolean(selectedFile) &&
+    coords !== null &&
+    isLocationValid &&
     lokasi.trim().length > 0 &&
     jenisSampah.trim().length > 0 &&
     deskripsi.trim().length > 0;
 
+  // Menghentikan stream kamera
+  const stopCameraStream = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setIsCameraOpen(false);
+  }, []);
+
+  // Membuka kamera langsung di dalam browser (tanpa File Explorer / Galeri)
+  const startCamera = async () => {
+    setErrorMsg("");
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setErrorMsg(
+        "Browser tidak mendukung akses kamera langsung. Gunakan Chrome atau Safari terbaru."
+      );
+      return;
+    }
+
+    try {
+      stopCameraStream();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+      setIsCameraOpen(true);
+    } catch {
+      setErrorMsg(
+        "Gagal mengakses kamera. Pastikan izin kamera di browser sudah diizinkan."
+      );
+    }
+  };
+
+  // Sambungkan stream ke elemen <video> saat kamera dibuka
+  useEffect(() => {
+    if (isCameraOpen && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [isCameraOpen]);
+
+  // Jepret foto dari tampilan kamera live
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setErrorMsg("Gagal menangkap gambar dari kamera.");
+          return;
+        }
+
+        const file = new File([blob], `kamera-${Date.now()}.jpg`, {
+          type: "image/jpeg",
+          lastModified: Date.now(),
+        });
+
+        setSelectedFile(file);
+        setPreviewUrl(URL.createObjectURL(file));
+        setErrorMsg("");
+        stopCameraStream();
+      },
+      "image/jpeg",
+      0.85
+    );
+  };
+
+  // Bersihkan kamera & preview saat komponen ditutup
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
   // Mengubah koordinat GPS menjadi nama jalan otomatis
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
-    isUserTypingRef.current = false;
-    setShowDropdown(false);
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=id`
@@ -66,104 +198,14 @@ export default function PelaporanPage() {
       if (data?.display_name) {
         setLokasi(data.display_name);
       } else {
-        setLokasi(`Titik GPS (${lat}, ${lng})`);
+        setLokasi(`Titik GPS Kelapa Tiga (${lat}, ${lng})`);
       }
     } catch {
-      setLokasi(`Titik GPS (${lat}, ${lng})`);
+      setLokasi(`Titik GPS Kelapa Tiga (${lat}, ${lng})`);
     }
   }, []);
 
-  // Mencari koordinat dari ketikan alamat/gang (Forward Geocoding)
-  const searchAddress = useCallback(
-    async (query: string, autoSelectFirst = false) => {
-      const cleanQuery = query.trim();
-      if (cleanQuery.length < 3) {
-        setSearchResults([]);
-        setShowDropdown(false);
-        return;
-      }
-
-      // Ubah singkatan "gg." menjadi "Gang" dan fokuskan ke Kelapa Tiga
-      const normalizedQuery = cleanQuery.replace(/\bgg\.?\s*/gi, "Gang ");
-      const finalQuery = /kelapa\s*tiga|bandar\s*lampung/i.test(normalizedQuery)
-        ? normalizedQuery
-        : `${normalizedQuery}, Kelapa Tiga, Bandar Lampung`;
-
-      setIsSearchingLocation(true);
-      try {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          finalQuery
-        )}&countrycodes=id&viewbox=105.20,-5.46,105.32,-5.36&bounded=0&limit=5&accept-language=id`;
-
-        const res = await fetch(url);
-        const data: NominatimResult[] = await res.json();
-        const results = Array.isArray(data) ? data : [];
-
-        setSearchResults(results);
-
-        if (autoSelectFirst && results.length > 0) {
-          const first = results[0];
-          const lat = Number(Number(first.lat).toFixed(6));
-          const lng = Number(Number(first.lon).toFixed(6));
-          isUserTypingRef.current = false;
-          setLokasi(first.display_name);
-          setCoords({ lat, lng });
-          setShowDropdown(false);
-          setErrorMsg("");
-        } else {
-          setShowDropdown(true);
-        }
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setIsSearchingLocation(false);
-      }
-    },
-    []
-  );
-
-  // Autocomplete otomatis saat user mengetik lokasi (jeda 500ms)
-  useEffect(() => {
-    if (!isUserTypingRef.current) return;
-
-    const timer = setTimeout(() => {
-      if (lokasi.trim().length >= 3) {
-        searchAddress(lokasi, false);
-      } else {
-        setSearchResults([]);
-        setShowDropdown(false);
-      }
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [lokasi, searchAddress]);
-
-  // Tutup dropdown saran lokasi kalau klik di luar kolom pencarian
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        searchContainerRef.current &&
-        !searchContainerRef.current.contains(e.target as Node)
-      ) {
-        setShowDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Pilih salah satu hasil pencarian alamat
-  const handleSelectSearchResult = (item: NominatimResult) => {
-    const lat = Number(Number(item.lat).toFixed(6));
-    const lng = Number(Number(item.lon).toFixed(6));
-    isUserTypingRef.current = false;
-    setLokasi(item.display_name);
-    setCoords({ lat, lng });
-    setShowDropdown(false);
-    setErrorMsg("");
-  };
-
-  // Inisialisasi Peta Interaktif Leaflet
+  // Inisialisasi Peta Interaktif Leaflet + Garis Batas Wilayah Kelapa Tiga
   useEffect(() => {
     let isMounted = true;
 
@@ -192,28 +234,77 @@ export default function PelaporanPage() {
         attribution: "&copy; OpenStreetMap contributors",
       }).addTo(map);
 
+      // Gambar kotak batas area layanan Kelurahan Kelapa Tiga
+      L.rectangle(
+        [
+          [KELAPA_TIGA_BOUNDS.minLat, KELAPA_TIGA_BOUNDS.minLng],
+          [KELAPA_TIGA_BOUNDS.maxLat, KELAPA_TIGA_BOUNDS.maxLng],
+        ],
+        {
+          color: "#2475E5",
+          weight: 2,
+          dashArray: "6 6",
+          fillColor: "#2475E5",
+          fillOpacity: 0.06,
+        }
+      ).addTo(map);
+
       const marker = L.marker([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], {
         draggable: true,
         icon: customIcon,
       }).addTo(map);
 
-      // Update koordinat & alamat saat pin digeser manual
+      const handleAdjustPin = (newLat: number, newLng: number) => {
+        const anchor = rawGpsCoordsRef.current;
+
+        if (!anchor || !isWithinKelapaTiga(anchor.lat, anchor.lng)) {
+          setErrorMsg(
+            "Aktifkan GPS di dalam wilayah Kelurahan Kelapa Tiga terlebih dahulu."
+          );
+          if (anchor) {
+            marker.setLatLng([anchor.lat, anchor.lng]);
+          }
+          return;
+        }
+
+        const distance = getDistanceMeters(
+          anchor.lat,
+          anchor.lng,
+          newLat,
+          newLng
+        );
+
+        if (
+          !isWithinKelapaTiga(newLat, newLng) ||
+          distance > MAX_PIN_OFFSET_METERS
+        ) {
+          marker.setLatLng([anchor.lat, anchor.lng]);
+          setCoords({ lat: anchor.lat, lng: anchor.lng });
+          setErrorMsg(
+            "Pin hanya dapat disesuaikan maksimal 100 meter dari posisi GPS Anda dan harus tetap di dalam Kelurahan Kelapa Tiga."
+          );
+          return;
+        }
+
+        setErrorMsg("");
+        setCoords({ lat: newLat, lng: newLng });
+        reverseGeocode(newLat, newLng);
+      };
+
       marker.on("dragend", () => {
         const pos = marker.getLatLng();
-        const lat = Number(pos.lat.toFixed(6));
-        const lng = Number(pos.lng.toFixed(6));
-        setCoords({ lat, lng });
-        reverseGeocode(lat, lng);
+        handleAdjustPin(
+          Number(pos.lat.toFixed(6)),
+          Number(pos.lng.toFixed(6))
+        );
       });
 
-      // Update koordinat & alamat saat peta diklik
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       map.on("click", (e: any) => {
-        const lat = Number(e.latlng.lat.toFixed(6));
-        const lng = Number(e.latlng.lng.toFixed(6));
-        marker.setLatLng([lat, lng]);
-        setCoords({ lat, lng });
-        reverseGeocode(lat, lng);
+        handleAdjustPin(
+          Number(e.latlng.lat.toFixed(6)),
+          Number(e.latlng.lng.toFixed(6))
+        );
       });
 
       mapInstanceRef.current = map;
@@ -242,6 +333,8 @@ export default function PelaporanPage() {
   const detectLocation = useCallback(
     (isAuto = false) => {
       if (!("geolocation" in navigator)) {
+        setIsLocationValid(false);
+        setLocationStatusMsg("Browser tidak mendukung fitur lokasi GPS.");
         if (!isAuto) {
           setErrorMsg("Browser tidak mendukung fitur lokasi GPS.");
         }
@@ -257,19 +350,43 @@ export default function PelaporanPage() {
         (position) => {
           const lat = Number(position.coords.latitude.toFixed(6));
           const lng = Number(position.coords.longitude.toFixed(6));
+
+          rawGpsCoordsRef.current = { lat, lng };
           setCoords({ lat, lng });
-          reverseGeocode(lat, lng);
+
+          if (isWithinKelapaTiga(lat, lng)) {
+            setIsLocationValid(true);
+            setLocationStatusMsg(
+              "Lokasi terverifikasi di dalam wilayah Kelurahan Kelapa Tiga."
+            );
+            setErrorMsg("");
+            reverseGeocode(lat, lng);
+          } else {
+            setIsLocationValid(false);
+            setLokasi("");
+            setLocationStatusMsg(
+              "Di luar jangkauan: posisi GPS Anda berada di luar Kelurahan Kelapa Tiga, Bandar Lampung."
+            );
+            setErrorMsg(
+              "Pelaporan ditolak: layanan ini khusus untuk titik sampah di dalam wilayah Kelurahan Kelapa Tiga."
+            );
+          }
+
           setIsLocating(false);
         },
         () => {
+          setIsLocationValid(false);
+          setLocationStatusMsg(
+            "Izin GPS belum aktif. Aktifkan lokasi perangkat untuk melapor."
+          );
           if (!isAuto) {
             setErrorMsg(
-              "Gagal mengambil lokasi. Pastikan izin lokasi di browser aktif."
+              "Gagal mengambil lokasi GPS. Pastikan izin lokasi di browser sudah diaktifkan."
             );
           }
           setIsLocating(false);
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     },
     [reverseGeocode]
@@ -279,33 +396,24 @@ export default function PelaporanPage() {
     detectLocation(true);
   }, [detectLocation]);
 
-  // Bersihkan URL preview lama dari memori saat foto diganti/halaman ditutup
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setPreviewUrl(URL.createObjectURL(file));
-      setErrorMsg("");
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg("");
 
     if (!selectedFile) {
-      setErrorMsg("Poin 1 wajib diisi: Unggah foto tempat sampah terlebih dahulu.");
+      setErrorMsg("Poin 1 wajib diisi: Ambil foto tempat sampah menggunakan kamera.");
+      return;
+    }
+
+    if (!coords || !isLocationValid || !isWithinKelapaTiga(coords.lat, coords.lng)) {
+      setErrorMsg(
+        "Poin 2 tidak valid: Lokasi GPS harus berada di dalam wilayah Kelurahan Kelapa Tiga."
+      );
       return;
     }
 
     if (!lokasi.trim()) {
-      setErrorMsg("Poin 2 wajib diisi: Tentukan patokan atau titik lokasi sampah.");
+      setErrorMsg("Poin 2 wajib diisi: Tunggu titik lokasi GPS terbaca.");
       return;
     }
 
@@ -332,11 +440,8 @@ export default function PelaporanPage() {
 
       formData.append("jenis_sampah", jenisSampah);
       formData.append("deskripsi", deskripsi);
-
-      if (coords) {
-        formData.append("latitude", String(coords.lat));
-        formData.append("longitude", String(coords.lng));
-      }
+      formData.append("latitude", String(coords.lat));
+      formData.append("longitude", String(coords.lng));
 
       const response = await fetch("/api/laporan", {
         method: "POST",
@@ -406,114 +511,103 @@ export default function PelaporanPage() {
               </div>
             )}
 
-            {/* 1. UPLOAD FOTO */}
+            {/* 1. KAMERA LANGSUNG (LIVE VIEWFINDER, TANPA FILE PICKER) */}
             <div>
               <label className="mb-2 block text-[14px] font-bold text-[#17396B]">
-                1. Foto tempat sampah <span className="text-red-500">*</span>
+                1. Foto tempat sampah (Kamera Langsung){" "}
+                <span className="text-red-500">*</span>
               </label>
 
-              <label className="flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#91BCFF] bg-[#F3F8FF] px-4 py-5 text-center transition hover:bg-[#EAF3FF]">
-                <input
-                  type="file"
-                  accept="image/png, image/jpeg"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-
-                {previewUrl ? (
-                  <img
-                    src={previewUrl}
-                    alt="Preview foto sampah"
-                    className="max-h-52 w-auto rounded-lg border border-[#C9DDFB] object-contain shadow-sm"
-                  />
+              <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#91BCFF] bg-[#F3F8FF] px-4 py-5 text-center">
+                {isCameraOpen ? (
+                  <div className="w-full space-y-3">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="mx-auto max-h-64 w-full rounded-lg border border-[#C9DDFB] bg-black object-cover"
+                    />
+                    <div className="flex justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={capturePhoto}
+                        className="rounded-lg bg-[#2475E5] px-5 py-2.5 text-xs font-bold text-white shadow transition hover:bg-[#155FC5]"
+                      >
+                        📸 Jepret Foto Sekarang
+                      </button>
+                      <button
+                        type="button"
+                        onClick={stopCameraStream}
+                        className="rounded-lg border border-[#C9DDFB] bg-white px-4 py-2.5 text-xs font-semibold text-[#526987] transition hover:bg-gray-50"
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <span className="text-3xl text-[#2475E5]">📷</span>
+                  <>
+                    {previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt="Preview foto sampah"
+                        className="max-h-52 w-auto rounded-lg border border-[#C9DDFB] object-contain shadow-sm"
+                      />
+                    ) : (
+                      <span className="text-3xl text-[#2475E5]">📷</span>
+                    )}
+
+                    <span className="mt-2 text-sm font-bold text-[#17396B]">
+                      {selectedFile
+                        ? "Foto berhasil diambil dari kamera"
+                        : "Ambil foto langsung di lokasi"}
+                    </span>
+
+                    <span className="mt-1 text-[10px] text-[#7185A5]">
+                      Unggah dari galeri maupun file perangkat dinonaktifkan.
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={startCamera}
+                      className="mt-3 rounded-lg bg-[#2475E5] px-5 py-2 text-[14px] font-semibold text-white transition hover:bg-[#155FC5]"
+                    >
+                      {selectedFile ? "Foto Ulang" : "Buka Kamera"}
+                    </button>
+                  </>
                 )}
-
-                <span className="mt-2 text-sm font-bold text-[#17396B]">
-                  {selectedFile ? selectedFile.name : "Ambil atau unggah foto"}
-                </span>
-
-                <span className="mt-1 text-[10px] text-[#7185A5]">
-                  JPG atau PNG, maksimal 4.5 MB. Pastikan tumpukan sampah terlihat
-                  jelas.
-                </span>
-
-                <span className="mt-3 rounded-lg bg-[#2475E5] px-5 py-2 text-[14px] font-semibold text-white">
-                  {selectedFile ? "Ganti Foto" : "Pilih Foto"}
-                </span>
-              </label>
+              </div>
             </div>
 
-            {/* 2. LOKASI & PETA INTERAKTIF */}
+            {/* 2. LOKASI GPS TERKUNCI DI KELURAHAN KELAPA TIGA */}
             <div>
               <label
                 htmlFor="lokasi"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                2. Lokasi <span className="text-red-500">*</span>
+                2. Lokasi GPS (Khusus Kelurahan Kelapa Tiga){" "}
+                <span className="text-red-500">*</span>
               </label>
 
-              {/* KOLOM PENCARIAN ALAMAT TERHUBUNG KE PETA */}
-              <div ref={searchContainerRef} className="relative">
-                <div className="flex gap-2">
-                  <input
-                    id="lokasi"
-                    type="text"
-                    value={lokasi}
-                    onChange={(e) => {
-                      isUserTypingRef.current = true;
-                      setLokasi(e.target.value);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        searchAddress(lokasi, true);
-                      }
-                    }}
-                    onFocus={() => {
-                      if (searchResults.length > 0) {
-                        setShowDropdown(true);
-                      }
-                    }}
-                    placeholder="Ketik nama jalan atau gang, misal: Gg. Jati atau Kelapa Tiga"
-                    className="w-full rounded-lg border border-[#C9DDFB] px-3 py-3 text-xs text-[#17396B] outline-none transition placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => searchAddress(lokasi, true)}
-                    disabled={isSearchingLocation || lokasi.trim().length < 3}
-                    className="shrink-0 rounded-lg bg-[#2475E5] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#155FC5] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isSearchingLocation ? "Mencari..." : "Cari di Peta"}
-                  </button>
-                </div>
-
-                {/* DROPDOWN HASIL PENCARIAN ALAMAT */}
-                {showDropdown && (
-                  <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-[#C9DDFB] bg-white shadow-lg">
-                    {searchResults.length > 0 ? (
-                      searchResults.map((item) => (
-                        <button
-                          key={item.place_id}
-                          type="button"
-                          onClick={() => handleSelectSearchResult(item)}
-                          className="block w-full border-b border-[#EEF5FF] px-3.5 py-2.5 text-left text-xs text-[#17396B] transition last:border-b-0 hover:bg-[#EAF3FF]"
-                        >
-                          📍 {item.display_name}
-                        </button>
-                      ))
-                    ) : (
-                      !isSearchingLocation && (
-                        <div className="px-3.5 py-2.5 text-xs text-[#7185A5]">
-                          Lokasi tidak ditemukan. Coba ketik nama jalan terdekat lalu geser pin biru di peta dan tulis nama gang di bawah.
-                        </div>
-                      )
-                    )}
-                  </div>
-                )}
+              <div
+                className={`mb-2 rounded-lg border px-3 py-2 text-xs font-medium ${
+                  isLocationValid
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                {isLocationValid ? "✅ " : "📍 "}
+                {locationStatusMsg}
               </div>
+
+              <input
+                id="lokasi"
+                type="text"
+                value={lokasi}
+                readOnly
+                placeholder="Alamat otomatis terisi sesuai titik GPS Anda..."
+                className="w-full rounded-lg border border-[#C9DDFB] bg-[#F8FBFF] px-3 py-3 text-xs text-[#17396B] outline-none"
+              />
 
               {/* CONTAINER PETA LEAFLET */}
               <div
@@ -526,12 +620,13 @@ export default function PelaporanPage() {
                 type="text"
                 value={patokan}
                 onChange={(e) => setPatokan(e.target.value)}
-                placeholder="Detail nama gang / patokan (opsional), misal: Masuk Gang Melati RT 03, depan warung"
+                placeholder="Detail nama gang / patokan (opsional), misal: Masuk Gang Pisang Kepok 1 RT 03"
                 className="mt-2.5 w-full rounded-lg border border-[#C9DDFB] px-3 py-2.5 text-xs text-[#17396B] outline-none transition placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
               />
 
               <p className="mt-1 text-[10px] text-[#7185A5]">
-                Ketik alamat/gang lalu klik hasil saran / tombol <strong>Cari di Peta</strong>, atau geser pin biru untuk menyesuaikan titiknya.
+                Garis biru putus-putus menandai batas wilayah Kelurahan Kelapa
+                Tiga. Pin dapat digeser tipis maksimal 100 m dari posisi GPS Anda.
               </p>
 
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -542,10 +637,8 @@ export default function PelaporanPage() {
                   className="rounded-lg bg-[#E4F0FF] px-3 py-2 text-[10px] font-semibold text-[#1766CE] transition hover:bg-[#D5E7FF] disabled:opacity-60"
                 >
                   {isLocating
-                    ? "Mendeteksi lokasi..."
-                    : coords
-                    ? "Perbarui lokasi saya saat ini"
-                    : "Gunakan lokasi saya saat ini"}
+                    ? "Mendeteksi lokasi GPS..."
+                    : "Perbarui titik GPS saya"}
                 </button>
 
                 {coords && (
@@ -636,7 +729,8 @@ export default function PelaporanPage() {
 
               {!isFormComplete && (
                 <p className="mt-2 text-center text-[11px] font-medium text-[#7185A5]">
-                  Lengkapi seluruh poin bertanda <span className="text-red-500">*</span> (poin 1–4) agar laporan dapat dikirim.
+                  Lengkapi poin 1–4 dengan foto kamera langsung dan posisi GPS
+                  di dalam Kelurahan Kelapa Tiga agar laporan dapat dikirim.
                 </p>
               )}
             </div>
@@ -652,8 +746,8 @@ export default function PelaporanPage() {
           <ol className="space-y-3.5">
             {[
               "Laporan bersifat anonim. Identitas pelapor tidak dikumpulkan.",
-              "Lampirkan foto asli tempat sampah yang terlihat jelas (dilarang foto AI atau rekayasa).",
-              "Isi lokasi seakurat mungkin agar petugas mudah menemukan titiknya.",
+              "Wajib mengambil foto langsung menggunakan kamera di lokasi (dilarang unggah galeri, foto AI, atau rekayasa).",
+              "Layanan pelaporan hanya berlaku di dalam wilayah GPS Kelurahan Kelapa Tiga, Bandar Lampung.",
               "Tulis deskripsi singkat, jelas, dan sopan.",
               "Satu laporan untuk satu lokasi. Jangan mengirim laporan palsu atau berulang.",
               "Jangan menyertakan wajah, plat nomor, atau data pribadi orang lain di foto.",
