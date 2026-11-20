@@ -20,7 +20,9 @@ export default function PelaporanPage() {
   const router = useRouter();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [lokasi, setLokasi] = useState("");
+  const [patokan, setPatokan] = useState("");
   const [jenisSampah, setJenisSampah] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
@@ -71,7 +73,7 @@ export default function PelaporanPage() {
     }
   }, []);
 
-  // Mencari koordinat dari ketikan alamat (Forward Geocoding)
+  // Mencari koordinat dari ketikan alamat/gang (Forward Geocoding)
   const searchAddress = useCallback(
     async (query: string, autoSelectFirst = false) => {
       const cleanQuery = query.trim();
@@ -81,10 +83,16 @@ export default function PelaporanPage() {
         return;
       }
 
+      // Ubah singkatan "gg." menjadi "Gang" dan fokuskan ke Kelapa Tiga
+      const normalizedQuery = cleanQuery.replace(/\bgg\.?\s*/gi, "Gang ");
+      const finalQuery = /kelapa\s*tiga|bandar\s*lampung/i.test(normalizedQuery)
+        ? normalizedQuery
+        : `${normalizedQuery}, Kelapa Tiga, Bandar Lampung`;
+
       setIsSearchingLocation(true);
       try {
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          cleanQuery
+          finalQuery
         )}&countrycodes=id&viewbox=105.20,-5.46,105.32,-5.36&bounded=0&limit=5&accept-language=id`;
 
         const res = await fetch(url);
@@ -271,10 +279,18 @@ export default function PelaporanPage() {
     detectLocation(true);
   }, [detectLocation]);
 
+  // Bersihkan URL preview lama dari memori saat foto diganti/halaman ditutup
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
       setErrorMsg("");
     }
   };
@@ -308,7 +324,12 @@ export default function PelaporanPage() {
     try {
       const formData = new FormData();
       formData.append("foto", selectedFile);
-      formData.append("lokasi", lokasi);
+
+      const lokasiLengkap = patokan.trim()
+        ? `${lokasi.trim()} (Patokan: ${patokan.trim()})`
+        : lokasi.trim();
+      formData.append("lokasi", lokasiLengkap);
+
       formData.append("jenis_sampah", jenisSampah);
       formData.append("deskripsi", deskripsi);
 
@@ -365,19 +386,19 @@ export default function PelaporanPage() {
         <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(30,90,160,0.12)] md:p-8">
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* BANNER PERINGATAN ANTI HOAX & AI */}
-              <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-800">
-                <span className="mt-0.5 text-lg leading-none">⚠️</span>
-                <div className="text-xs leading-relaxed">
-                  <p className="font-bold text-red-900">
-                    Peringatan: Dilarang Mengirim Laporan Hoax atau Gambar AI!
-                  </p>
-                  <p className="mt-1 text-red-700">
-                    Wajib melampirkan foto asli kondisi nyata di lapangan. Laporan
-                    palsu, rekayasa, atau gambar hasil buatan AI akan langsung
-                    ditindaklanjuti.
-                  </p>
-                </div>
+            <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-800">
+              <span className="mt-0.5 text-lg leading-none">⚠️</span>
+              <div className="text-xs leading-relaxed">
+                <p className="font-bold text-red-900">
+                  Peringatan: Dilarang Mengirim Laporan Hoax atau Gambar AI!
+                </p>
+                <p className="mt-1 text-red-700">
+                  Wajib melampirkan foto asli kondisi nyata di lapangan. Laporan
+                  palsu, rekayasa, atau gambar hasil buatan AI akan langsung
+                  ditindaklanjuti.
+                </p>
               </div>
+            </div>
 
             {errorMsg && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
@@ -399,13 +420,21 @@ export default function PelaporanPage() {
                   className="hidden"
                 />
 
-                <span className="text-3xl text-[#2475E5]">📷</span>
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Preview foto sampah"
+                    className="max-h-52 w-auto rounded-lg border border-[#C9DDFB] object-contain shadow-sm"
+                  />
+                ) : (
+                  <span className="text-3xl text-[#2475E5]">📷</span>
+                )}
 
                 <span className="mt-2 text-sm font-bold text-[#17396B]">
                   {selectedFile ? selectedFile.name : "Ambil atau unggah foto"}
                 </span>
 
-                <span className="mt-2 text-[10px] text-[#7185A5]">
+                <span className="mt-1 text-[10px] text-[#7185A5]">
                   JPG atau PNG, maksimal 4.5 MB. Pastikan tumpukan sampah terlihat
                   jelas.
                 </span>
@@ -447,7 +476,7 @@ export default function PelaporanPage() {
                         setShowDropdown(true);
                       }
                     }}
-                    placeholder="Ketik nama jalan atau wilayah, misal: Kelapa Tiga Bandar Lampung"
+                    placeholder="Ketik nama jalan atau gang, misal: Gg. Jati atau Kelapa Tiga"
                     className="w-full rounded-lg border border-[#C9DDFB] px-3 py-3 text-xs text-[#17396B] outline-none transition placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
                   />
 
@@ -478,7 +507,7 @@ export default function PelaporanPage() {
                     ) : (
                       !isSearchingLocation && (
                         <div className="px-3.5 py-2.5 text-xs text-[#7185A5]">
-                          Lokasi tidak ditemukan. Coba ketik nama jalan terdekat lalu geser pin biru di peta.
+                          Lokasi tidak ditemukan. Coba ketik nama jalan terdekat lalu geser pin biru di peta dan tulis nama gang di bawah.
                         </div>
                       )
                     )}
@@ -492,8 +521,17 @@ export default function PelaporanPage() {
                 className="relative z-0 mt-2 h-60 w-full overflow-hidden rounded-xl border border-[#C9DDFB] bg-[#E5F0FF]"
               />
 
+              {/* INPUT PATOKAN / NAMA GANG SPESIFIK */}
+              <input
+                type="text"
+                value={patokan}
+                onChange={(e) => setPatokan(e.target.value)}
+                placeholder="Detail nama gang / patokan (opsional), misal: Masuk Gang Melati RT 03, depan warung"
+                className="mt-2.5 w-full rounded-lg border border-[#C9DDFB] px-3 py-2.5 text-xs text-[#17396B] outline-none transition placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
+              />
+
               <p className="mt-1 text-[10px] text-[#7185A5]">
-                Ketik alamat lalu klik hasil saran / tombol <strong>Cari di Peta</strong>, atau geser pin biru untuk menyesuaikan titiknya.
+                Ketik alamat/gang lalu klik hasil saran / tombol <strong>Cari di Peta</strong>, atau geser pin biru untuk menyesuaikan titiknya.
               </p>
 
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">

@@ -124,11 +124,26 @@ export default function DetailLaporanPage() {
   }, [laporan]);
 
   const formatTanggal = (tanggal: string) => {
-    return new Date(tanggal).toLocaleDateString("id-ID", {
+    const date = new Date(tanggal);
+    if (Number.isNaN(date.getTime())) return tanggal;
+
+    const tgl = date.toLocaleDateString("id-ID", {
       day: "numeric",
       month: "long",
       year: "numeric",
+      timeZone: "Asia/Jakarta",
     });
+
+    const jam = date
+      .toLocaleTimeString("id-ID", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Asia/Jakarta",
+      })
+      .replace(".", ":");
+
+    return `${tgl}, ${jam} WIB`;
   };
 
   const handleSimpan = async () => {
@@ -302,7 +317,7 @@ export default function DetailLaporanPage() {
                 </div>
 
                 <div className="grid grid-cols-[95px_1fr] gap-2">
-                  <span className="text-[#8192AA]">Tanggal lapor</span>
+                  <span className="text-[#8192AA]">Waktu lapor</span>
                   <span className="font-medium text-[#173663]">
                     {formatTanggal(laporan.created_at)}
                   </span>
