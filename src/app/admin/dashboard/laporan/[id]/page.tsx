@@ -16,6 +16,7 @@ interface Laporan {
   deskripsi: string;
   julukan: string;
   status: string;
+  catatan_petugas?: string | null;
   created_at: string;
 }
 
@@ -56,6 +57,7 @@ export default function DetailLaporanPage() {
         if (dataDitemukan) {
           setLaporan(dataDitemukan);
           setStatus(dataDitemukan.status);
+          setCatatan(dataDitemukan.catatan_petugas || "");
         }
       } catch {
         setError("Gagal memuat data laporan.");
@@ -168,9 +170,9 @@ export default function DetailLaporanPage() {
   // Tampilan ketika data sedang dimuat
   if (loading) {
     return (
-      <main className="flex min-h-screen bg-[#F2F7FF]">
+      <main className="flex min-h-screen flex-col bg-[#F2F7FF] md:flex-row">
         <Sidebar />
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex flex-1 items-center justify-center p-6">
           <p className="text-sm text-[#647A9B]">
             Memuat detail laporan...
           </p>
@@ -182,9 +184,9 @@ export default function DetailLaporanPage() {
   // Tampilan jika laporan tidak ditemukan
   if (error || !laporan) {
     return (
-      <main className="flex min-h-screen bg-[#F2F7FF]">
+      <main className="flex min-h-screen flex-col bg-[#F2F7FF] md:flex-row">
         <Sidebar />
-        <div className="p-8">
+        <div className="p-6 md:p-8">
           <p className="text-[#173663]">
             {error || "Laporan tidak ditemukan."}
           </p>
@@ -203,27 +205,27 @@ export default function DetailLaporanPage() {
     laporan.latitude !== null && laporan.longitude !== null;
 
   return (
-    <main className="flex min-h-screen bg-[#F2F7FF]">
+    <main className="flex min-h-screen flex-col bg-[#F2F7FF] md:flex-row">
       <Sidebar />
 
-      <section className="min-w-0 flex-1 px-5 py-6 md:px-7">
+      <section className="min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 md:py-7">
         {/* Judul */}
         <Link
           href="/admin/dashboard"
-          className="text-[11px] font-medium text-[#2470D5] hover:underline"
+          className="inline-block text-xs font-medium text-[#2470D5] hover:underline"
         >
           ← Kembali ke daftar laporan
         </Link>
 
-        <h1 className="mb-5 mt-2 text-xl font-bold text-[#173663]">
+        <h1 className="mb-5 mt-2 text-xl font-bold text-[#173663] sm:text-2xl">
           Detail Laporan
         </h1>
 
         {/* Konten utama */}
-        <div className="grid grid-cols-1 items-start gap-4 min-[700px]:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
           {/* Kolom kiri: Foto dan lokasi */}
-          <div className="rounded-2xl bg-white p-3.5 shadow-[0_5px_18px_rgba(30,80,150,0.08)]">
-            <p className="mb-2.5 text-[12px] font-bold tracking-[1.5px] text-[#2470D5]">
+          <div className="rounded-2xl bg-white p-4 shadow-[0_5px_18px_rgba(30,80,150,0.08)] sm:p-5">
+            <p className="mb-2.5 text-xs font-bold tracking-[1.5px] text-[#2470D5]">
               FOTO DARI PELAPOR
             </p>
 
@@ -232,11 +234,11 @@ export default function DetailLaporanPage() {
               <img
                 src={laporan.foto_url}
                 alt="Foto laporan sampah"
-                className="h-auto max-h-[400px] w-auto max-w-full object-contain"
+                className="h-auto max-h-[380px] w-auto max-w-full object-contain"
               />
             </div>
 
-            <p className="mb-2.5 mt-3 text-[12px] font-bold tracking-[1.5px] text-[#2470D5]">
+            <p className="mb-2.5 mt-4 text-xs font-bold tracking-[1.5px] text-[#2470D5]">
               TITIK LOKASI
             </p>
 
@@ -248,7 +250,7 @@ export default function DetailLaporanPage() {
                   className="relative z-0 h-56 w-full overflow-hidden rounded-xl border border-[#D2E3FA] bg-[#E5F0FF]"
                 />
 
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
                   <a
                     href={`https://www.google.com/maps?q=${laporan.latitude},${laporan.longitude}`}
                     target="_blank"
@@ -271,73 +273,74 @@ export default function DetailLaporanPage() {
           </div>
 
           {/* Kolom kanan */}
-          <div className="space-y-3.5">
+          <div className="space-y-4">
             {/* Informasi laporan */}
-            <div className="rounded-2xl bg-white p-4 shadow-[0_5px_18px_rgba(30,80,150,0.08)]">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-[16px] font-bold text-[#2470D5]">
+            <div className="rounded-2xl bg-white p-4 shadow-[0_5px_18px_rgba(30,80,150,0.08)] sm:p-5">
+              <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-bold text-[#2470D5] sm:text-lg">
                   {laporan.julukan}
                 </h2>
 
-                <span className="shrink-0 rounded-full bg-[#E5F0FF] px-2.5 py-1 text-[10px] font-semibold text-[#1556B8]">
+                <span className="shrink-0 rounded-full bg-[#E5F0FF] px-3 py-1 text-xs font-semibold text-[#1556B8]">
                   ID: {laporan.id}
                 </span>
               </div>
 
-              <div className="space-y-2 text-[14px]">
-                <div className="grid grid-cols-[65px_1fr] gap-2">
+              <div className="space-y-2.5 text-xs sm:text-sm">
+                <div className="grid grid-cols-[95px_1fr] gap-2">
                   <span className="text-[#8192AA]">Lokasi</span>
                   <span className="font-medium text-[#173663]">
                     {laporan.lokasi}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-[65px_1fr] gap-2">
+                <div className="grid grid-cols-[95px_1fr] gap-2">
                   <span className="text-[#8192AA]">Jenis</span>
                   <span className="font-medium text-[#173663]">
                     {laporan.jenis_sampah}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-[65px_1fr] gap-2">
+                <div className="grid grid-cols-[95px_1fr] gap-2">
                   <span className="text-[#8192AA]">Tanggal lapor</span>
                   <span className="font-medium text-[#173663]">
                     {formatTanggal(laporan.created_at)}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-[65px_1fr] gap-2">
+                <div className="grid grid-cols-[95px_1fr] items-center gap-2">
                   <span className="text-[#8192AA]">Status saat ini</span>
-                  <span className="w-fit rounded-full bg-[#E0ECFF] px-3 py-1 font-semibold text-[#1556B8]">
+                  <span className="w-fit rounded-full bg-[#E0ECFF] px-3 py-1 text-xs font-semibold text-[#1556B8]">
                     {status}
                   </span>
                 </div>
               </div>
 
-              <p className="mb-2 mt-4 text-[9px] font-bold tracking-[1.5px] text-[#2470D5]">
+              <p className="mb-2 mt-4 text-xs font-bold tracking-[1.5px] text-[#2470D5]">
                 DESKRIPSI PELAPOR
               </p>
 
-              <div className="rounded-lg bg-[#F1F6FE] p-2.5 text-[10px] leading-relaxed text-[#647A9B]">
-                {laporan.deskripsi}
+              <div className="rounded-xl bg-[#F1F6FE] p-3 text-xs leading-relaxed text-[#647A9B] sm:text-sm">
+                {laporan.deskripsi || "Tidak ada deskripsi tambahan."}
               </div>
             </div>
 
             {/* Ubah status */}
-            <div className="rounded-2xl bg-white p-4 shadow-[0_5px_18px_rgba(30,80,150,0.08)]">
-              <h2 className="mb-3 text-sm font-bold text-[#2470D5]">
+            <div className="rounded-2xl bg-white p-4 shadow-[0_5px_18px_rgba(30,80,150,0.08)] sm:p-5">
+              <h2 className="mb-3 text-sm font-bold text-[#2470D5] sm:text-base">
                 Ubah Status
               </h2>
 
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-3 gap-2">
                 {["Menunggu", "Diproses", "Selesai"].map((item) => (
                   <button
                     key={item}
+                    type="button"
                     onClick={() => setStatus(item)}
-                    className={`rounded-lg border px-1 py-2 text-[9px] transition ${
+                    className={`rounded-xl border px-2 py-2.5 text-xs transition ${
                       status === item
                         ? "border-[#1556B8] bg-[#E5F0FF] font-bold text-[#1556B8]"
-                        : "border-[#CFE0FA] bg-white text-[#647A9B] hover:bg-[#F1F6FE]"
+                        : "border-[#CFE0FA] bg-white font-medium text-[#647A9B] hover:bg-[#F1F6FE]"
                     }`}
                   >
                     {item}
@@ -345,7 +348,7 @@ export default function DetailLaporanPage() {
                 ))}
               </div>
 
-              <label className="mb-1.5 mt-3 block text-[10px] font-semibold text-[#173663]">
+              <label className="mb-1.5 mt-4 block text-xs font-semibold text-[#173663]">
                 Catatan petugas (opsional)
               </label>
 
@@ -354,18 +357,20 @@ export default function DetailLaporanPage() {
                 onChange={(e) => setCatatan(e.target.value)}
                 placeholder="Contoh: Petugas kebersihan dijadwalkan hari Jumat."
                 rows={3}
-                className="w-full resize-none rounded-lg border border-[#CFE0FA] p-2.5 text-[10px] outline-none placeholder:text-[#999] focus:border-[#2470D5]"
+                className="w-full resize-none rounded-xl border border-[#CFE0FA] p-3 text-xs text-[#173663] outline-none placeholder:text-[#999] focus:border-[#2470D5] sm:text-sm"
               />
 
               <button
+                type="button"
                 onClick={handleSimpan}
                 disabled={saving}
-                className="mt-2 w-full rounded-lg bg-[#2470D5] py-2.5 text-[10px] font-bold text-white shadow-md shadow-blue-200 transition hover:bg-[#1556B8] disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-3 w-full rounded-xl bg-[#2470D5] py-3 text-xs font-bold text-white shadow-md shadow-blue-200 transition hover:bg-[#1556B8] disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
               >
                 {saving ? "Menyimpan..." : "Simpan Perubahan"}
               </button>
+
               {pesan && (
-                <p className="mt-2 text-center text-xs text-[#2470D5]">
+                <p className="mt-2.5 text-center text-xs font-medium text-[#2470D5]">
                   {pesan}
                 </p>
               )}

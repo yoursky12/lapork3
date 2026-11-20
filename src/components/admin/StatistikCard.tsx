@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -66,33 +65,33 @@ export default function StatistikCard() {
   ];
 
   return (
-    <div className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mb-6 grid grid-cols-2 gap-3 sm:mb-8 sm:gap-5 xl:grid-cols-4">
       {daftarStatistik.map((item, index) => (
         <div
           key={item.judul}
-          className="rounded-2xl bg-white p-5 shadow-sm"
+          className="rounded-2xl bg-white p-4 shadow-sm sm:p-5"
         >
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-[#647A9B]">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-[#647A9B] sm:text-sm">
               {item.judul}
             </p>
 
             <div
-              className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.warna}`}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl sm:h-10 sm:w-10 ${item.warna}`}
             >
               <img
                 src={item.icon}
                 alt={item.judul}
-                className="h-6 w-6 object-contain"
+                className="h-5 w-5 object-contain sm:h-6 sm:w-6"
               />
             </div>
           </div>
 
-          <p className="mt-4 text-3xl font-bold text-[#173663]">
+          <p className="mt-3 text-2xl font-bold text-[#173663] sm:mt-4 sm:text-3xl">
             {loading ? "..." : statistik[index]}
           </p>
 
-          <p className="mt-1 text-xs text-[#8192AA]">
+          <p className="mt-1 text-[11px] text-[#8192AA] sm:text-xs">
             Data laporan warga
           </p>
         </div>
