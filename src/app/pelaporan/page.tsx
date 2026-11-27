@@ -6,9 +6,6 @@ import Navbar from "../../components/Navbar";
 import Image from "next/image";
 import "leaflet/dist/leaflet.css";
 
-// SAKLAR SEMENTARA: Ubah menjadi false sebelum tautan dibagikan ke warga!
-const MODE_UJI_COBA = true;
-
 // Poligon batas wilayah Kelurahan Kelapa Tiga (mengikuti Jl. Sisingamangaraja, Pasar Tamin, Jl. Kartini, dan Jl. H. Agus Salim)
 const KELAPA_TIGA_POLYGON: [number, number][] = [
   [-5.4062, 105.2368], // Puncak barat laut (tikungan Jl. Sisingamangaraja)
@@ -27,7 +24,6 @@ const MAX_PIN_OFFSET_METERS = 100;
 
 function isWithinKelapaTiga(lat: number, lng: number): boolean {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-  if (MODE_UJI_COBA) return true;
 
   let inside = false;
   for (
@@ -76,10 +72,6 @@ export default function PelaporanPage() {
   const [patokan, setPatokan] = useState("");
   const [jenisSampah, setJenisSampah] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
-
-  // State pencarian lokasi (hanya dipakai saat MODE_UJI_COBA)
-  const [searchQuery, setSearchQuery] = useState("");
-  const [isSearchingLocation, setIsSearchingLocation] = useState(false);
 
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     null
@@ -228,70 +220,6 @@ export default function PelaporanPage() {
     }
   }, []);
 
-  // Fungsi cari alamat / nama jalan / koordinat (khusus MODE_UJI_COBA)
-  const handleSearchLocation = async () => {
-    const query = searchQuery.trim();
-    if (!query) return;
-
-    setIsSearchingLocation(true);
-    setErrorMsg("");
-
-    try {
-      // 1. Cek jika user menempelkan koordinat langsung (contoh: -5.4095, 105.2420)
-      const coordMatch = query.match(
-        /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/
-      );
-      if (coordMatch) {
-        const lat = Number(Number(coordMatch[1]).toFixed(6));
-        const lng = Number(Number(coordMatch[2]).toFixed(6));
-        setCoords({ lat, lng });
-        setIsLocationValid(true);
-        setLocationStatusMsg("Lokasi diterapkan dari koordinat.");
-        reverseGeocode(lat, lng);
-        setIsSearchingLocation(false);
-        return;
-      }
-
-      // 2. Cari lewat Nominatim dengan prioritas area Bandar Lampung
-      const searchUrl = (q: string) =>
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          q
-        )}&viewbox=105.220,-5.395,105.270,-5.430&bounded=0&limit=1&accept-language=id`;
-
-      let res = await fetch(searchUrl(query));
-      let data = await res.json();
-
-      // Jika nama gang terlalu spesifik tidak ketemu, coba ambil bagian setelah koma (misal: "Kelapa Tiga, Bandar Lampung")
-      if ((!data || data.length === 0) && query.includes(",")) {
-        const fallbackQuery = query.split(",").slice(1).join(",").trim();
-        if (fallbackQuery) {
-          res = await fetch(searchUrl(fallbackQuery));
-          data = await res.json();
-        }
-      }
-
-      if (data && data.length > 0) {
-        const lat = Number(Number(data[0].lat).toFixed(6));
-        const lng = Number(Number(data[0].lon).toFixed(6));
-
-        setCoords({ lat, lng });
-        setLokasi(data[0].display_name || query);
-        setIsLocationValid(true);
-        setLocationStatusMsg(
-          "Lokasi ditemukan! Geser pin di peta jika ingin lebih presisi ke dalam gang."
-        );
-      } else {
-        setErrorMsg(
-          "Nama gang belum terdaftar di peta. Cari nama jalan besar (misal: Jl. Sisingamangaraja Bandar Lampung) lalu geser pin birunya manual."
-        );
-      }
-    } catch {
-      setErrorMsg("Gagal mencari lokasi. Periksa koneksi internet Anda.");
-    } finally {
-      setIsSearchingLocation(false);
-    }
-  };
-
   // Inisialisasi Peta Interaktif Leaflet + Garis Batas Wilayah Kelapa Tiga
   useEffect(() => {
     let isMounted = true;
@@ -336,15 +264,6 @@ export default function PelaporanPage() {
       }).addTo(map);
 
       const handleAdjustPin = (newLat: number, newLng: number) => {
-        if (MODE_UJI_COBA) {
-          setErrorMsg("");
-          setIsLocationValid(true);
-          setLocationStatusMsg("Mode Uji Coba: Titik peta bebas dipilih.");
-          setCoords({ lat: newLat, lng: newLng });
-          reverseGeocode(newLat, newLng);
-          return;
-        }
-
         const anchor = rawGpsCoordsRef.current;
 
         if (!anchor || !isWithinKelapaTiga(anchor.lat, anchor.lng)) {
@@ -447,9 +366,7 @@ export default function PelaporanPage() {
           if (isWithinKelapaTiga(lat, lng)) {
             setIsLocationValid(true);
             setLocationStatusMsg(
-              MODE_UJI_COBA
-                ? "Mode Uji Coba aktif: Bebas cari, geser, atau klik titik di peta."
-                : "Lokasi terverifikasi di dalam wilayah Kelurahan Kelapa Tiga."
+              "Lokasi terverifikasi di dalam wilayah Kelurahan Kelapa Tiga."
             );
             setErrorMsg("");
             reverseGeocode(lat, lng);
@@ -467,17 +384,6 @@ export default function PelaporanPage() {
           setIsLocating(false);
         },
         () => {
-          if (MODE_UJI_COBA) {
-            setCoords({ lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng });
-            setIsLocationValid(true);
-            setLocationStatusMsg(
-              "Mode Uji Coba: Cari nama jalan atau klik/geser pin di peta."
-            );
-            reverseGeocode(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng);
-            setIsLocating(false);
-            return;
-          }
-
           setIsLocationValid(false);
           setLocationStatusMsg(
             "Izin GPS belum aktif. Aktifkan lokasi perangkat untuk melapor."
@@ -496,19 +402,8 @@ export default function PelaporanPage() {
   );
 
   useEffect(() => {
-    if (MODE_UJI_COBA) {
-      // Langsung arahkan pin ke tengah Kelurahan Kelapa Tiga (tidak memakai lokasi GPS saat ini)
-      setCoords({ lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng });
-      setIsLocationValid(true);
-      setLocationStatusMsg(
-        "Mode Uji Coba: Peta dimulai di Kelurahan Kelapa Tiga. Cari alamat atau klik/geser pin."
-      );
-      reverseGeocode(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng);
-      return;
-    }
-
     detectLocation(true);
-  }, [detectLocation, reverseGeocode]);
+  }, [detectLocation]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -628,7 +523,7 @@ export default function PelaporanPage() {
             {/* 1. KAMERA LANGSUNG (LIVE VIEWFINDER, TANPA FILE PICKER) */}
             <div>
               <label className="mb-2 block text-[14px] font-bold text-[#17396B]">
-                1. Foto tempat sampah (Kamera Langsung){" "}
+1. Foto tempat sampah (Kamera Langsung){" "}
                 <span className="text-red-500">*</span>
               </label>
 
@@ -673,44 +568,21 @@ export default function PelaporanPage() {
 
                     <span className="mt-2 text-sm font-bold text-[#17396B]">
                       {selectedFile
-                        ? "Foto berhasil dipilih"
+                        ? "Foto berhasil diambil dari kamera"
                         : "Ambil foto langsung di lokasi"}
                     </span>
 
                     <span className="mt-1 text-[10px] text-[#7185A5]">
-                      {MODE_UJI_COBA
-                        ? "Mode Uji Coba aktif: Kamera langsung dan galeri tersedia."
-                        : "Unggah dari galeri maupun file perangkat dinonaktifkan."}
+                      Unggah dari galeri maupun file perangkat dinonaktifkan.
                     </span>
 
-                    <div className="mt-3 flex flex-wrap justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={startCamera}
-                        className="rounded-lg bg-[#2475E5] px-5 py-2 text-[14px] font-semibold text-white transition hover:bg-[#155FC5]"
-                      >
-                        {selectedFile ? "Foto Ulang" : "Buka Kamera"}
-                      </button>
-
-                      {MODE_UJI_COBA && (
-                        <label className="cursor-pointer rounded-lg border border-[#2475E5] bg-white px-4 py-2 text-[14px] font-semibold text-[#2475E5] transition hover:bg-blue-50">
-                          Pilih dari Galeri
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                setSelectedFile(file);
-                                setPreviewUrl(URL.createObjectURL(file));
-                                setErrorMsg("");
-                              }
-                            }}
-                          />
-                        </label>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={startCamera}
+                      className="mt-3 rounded-lg bg-[#2475E5] px-5 py-2 text-[14px] font-semibold text-white transition hover:bg-[#155FC5]"
+                    >
+                      {selectedFile ? "Foto Ulang" : "Buka Kamera"}
+                    </button>
                   </>
                 )}
               </div>
@@ -722,7 +594,7 @@ export default function PelaporanPage() {
                 htmlFor="lokasi"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                2. Lokasi GPS (Khusus Kelurahan Kelapa Tiga){" "}
+2. Lokasi GPS (Khusus Kelurahan Kelapa Tiga){" "}
                 <span className="text-red-500">*</span>
               </label>
 
@@ -736,33 +608,6 @@ export default function PelaporanPage() {
                 {isLocationValid ? "✅ " : "📍 "}
                 {locationStatusMsg}
               </div>
-
-              {/* KOLOM PENCARIAN LOKASI (KHUSUS MODE UJI COBA) */}
-              {MODE_UJI_COBA && (
-                <div className="mb-2 flex gap-2">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleSearchLocation();
-                      }
-                    }}
-                    placeholder="Cari nama jalan atau tempel koordinat (contoh: -5.4095, 105.2420)..."
-                    className="w-full rounded-lg border border-[#C9DDFB] bg-white px-3 py-2.5 text-xs text-[#17396B] outline-none placeholder:text-gray-400 focus:border-[#2475E5] focus:ring-2 focus:ring-blue-100"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSearchLocation}
-                    disabled={isSearchingLocation}
-                    className="shrink-0 rounded-lg bg-[#2475E5] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#155FC5] disabled:opacity-60"
-                  >
-                    {isSearchingLocation ? "Mencari..." : "Cari"}
-                  </button>
-                </div>
-              )}
 
               <input
                 id="lokasi"
@@ -819,7 +664,7 @@ export default function PelaporanPage() {
                 htmlFor="jenis"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                3. Jenis sampah <span className="text-red-500">*</span>
+3. Jenis sampah <span className="text-red-500">*</span>
               </label>
 
               <select
@@ -847,7 +692,7 @@ export default function PelaporanPage() {
                 htmlFor="deskripsi"
                 className="mb-2 block text-[14px] font-bold text-[#17396B]"
               >
-                4. Deskripsi singkat <span className="text-red-500">*</span>
+4. Deskripsi singkat <span className="text-red-500">*</span>
               </label>
 
               <textarea

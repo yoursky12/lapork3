@@ -7,9 +7,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// SAKLAR SEMENTARA: Ubah menjadi false sebelum tautan dibagikan ke warga!
-const MODE_UJI_COBA = true;
-
 // Poligon batas koordinat wilayah Kelurahan Kelapa Tiga, Kec. Tanjung Karang Pusat, Bandar Lampung
 const KELAPA_TIGA_POLYGON: [number, number][] = [
   [-5.4062, 105.2368], // Puncak barat laut (tikungan Jl. Sisingamangaraja)
@@ -28,7 +25,6 @@ const COOLDOWN_LOKASI_MENIT = 30;
 
 function isWithinKelapaTiga(lat: number, lng: number): boolean {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-  if (MODE_UJI_COBA) return true;
 
   let inside = false;
   for (
@@ -91,23 +87,21 @@ export async function GET() {
 // POST: Validasi anti-spam & wilayah -> unggah foto -> simpan laporan
 export async function POST(request: Request) {
   try {
-    // 1. Pengunci Cookie Browser (10 menit) - dilewati saat MODE_UJI_COBA aktif
-    if (!MODE_UJI_COBA) {
-      const lastCookieTs = bacaCookieCooldown(request);
-      const cooldownMs = COOLDOWN_PENGIRIM_MENIT * 60 * 1000;
+    // 1. Pengunci Cookie Browser (10 menit)
+    const lastCookieTs = bacaCookieCooldown(request);
+    const cooldownMs = COOLDOWN_PENGIRIM_MENIT * 60 * 1000;
 
-      if (lastCookieTs && Date.now() - lastCookieTs < cooldownMs) {
-        const sisaMenit = Math.max(
-          1,
-          Math.ceil((cooldownMs - (Date.now() - lastCookieTs)) / 60000)
-        );
-        return NextResponse.json(
-          {
-            error: `Kamu baru saja mengirim laporan. Tunggu sekitar ${sisaMenit} menit lagi sebelum mengirim laporan berikutnya.`,
-          },
-          { status: 429 }
-        );
-      }
+    if (lastCookieTs && Date.now() - lastCookieTs < cooldownMs) {
+      const sisaMenit = Math.max(
+        1,
+        Math.ceil((cooldownMs - (Date.now() - lastCookieTs)) / 60000)
+      );
+      return NextResponse.json(
+        {
+          error: `Kamu baru saja mengirim laporan. Tunggu sekitar ${sisaMenit} menit lagi sebelum mengirim laporan berikutnya.`,
+        },
+        { status: 429 }
+      );
     }
 
     const formData = await request.formData();
@@ -160,31 +154,29 @@ export async function POST(request: Request) {
     }
 
     // 2. Filter Titik Lokasi Ganda (radius ±25 meter dalam 30 menit terakhir)
-    if (!MODE_UJI_COBA) {
-      const batasWaktuLokasi = new Date(
-        Date.now() - COOLDOWN_LOKASI_MENIT * 60 * 1000
-      ).toISOString();
-      const radiusDerajat = 0.00025;
+    const batasWaktuLokasi = new Date(
+      Date.now() - COOLDOWN_LOKASI_MENIT * 60 * 1000
+    ).toISOString();
+    const radiusDerajat = 0.00025;
 
-      const { data: laporanSekitar } = await supabase
-        .from('laporan')
-        .select('id')
-        .gte('created_at', batasWaktuLokasi)
-        .gte('latitude', latNum - radiusDerajat)
-        .lte('latitude', latNum + radiusDerajat)
-        .gte('longitude', lngNum - radiusDerajat)
-        .lte('longitude', lngNum + radiusDerajat)
-        .limit(1);
+    const { data: laporanSekitar } = await supabase
+      .from('laporan')
+      .select('id')
+      .gte('created_at', batasWaktuLokasi)
+      .gte('latitude', latNum - radiusDerajat)
+      .lte('latitude', latNum + radiusDerajat)
+      .gte('longitude', lngNum - radiusDerajat)
+      .lte('longitude', lngNum + radiusDerajat)
+      .limit(1);
 
-      if (laporanSekitar && laporanSekitar.length > 0) {
-        return NextResponse.json(
-          {
-            error:
-              'Titik lokasi sampah ini baru saja dilaporkan dalam 30 menit terakhir. Tidak perlu mengirim laporan ganda.',
-          },
-          { status: 429 }
-        );
-      }
+    if (laporanSekitar && laporanSekitar.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            'Titik lokasi sampah ini baru saja dilaporkan dalam 30 menit terakhir. Tidak perlu mengirim laporan ganda.',
+        },
+        { status: 429 }
+      );
     }
 
     // 3. Lolos semua pengecekan -> baru unggah foto ke Supabase Storage
@@ -244,15 +236,13 @@ export async function POST(request: Request) {
       { status: 201 }
     );
 
-    // Pasang cookie cooldown hanya saat MODE_UJI_COBA = false
-    if (!MODE_UJI_COBA) {
-      response.cookies.set('lapor_cooldown', String(Date.now()), {
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: COOLDOWN_PENGIRIM_MENIT * 60,
-        path: '/',
-      });
-    }
+    // Pasang cookie cooldown di browser pelapor selama 10 menit
+    response.cookies.set('lapor_cooldown', String(Date.now()), {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: COOLDOWN_PENGIRIM_MENIT * 60,
+      path: '/',
+    });
 
     return response;
   } catch {
